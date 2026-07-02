@@ -1,31 +1,87 @@
-{
-  "name": "أثير - القرآن الكريم",
-  "short_name": "أثير",
-  "description": "منصة قرآنية متكاملة لتلاوة وحفظ القرآن الكريم مع تفسير ميسر وأصوات قراء متعددة",
-  "start_url": "./index.html",
-  "display": "standalone",
-  "background_color": "#1a2a4a",
-  "theme_color": "#1a2a4a",
-  "orientation": "portrait",
-  "icons": [
-    { "src": "icon-72.png", "sizes": "72x72", "type": "image/png", "purpose": "any" },
-    { "src": "icon-96.png", "sizes": "96x96", "type": "image/png", "purpose": "any" },
-    { "src": "icon-128.png", "sizes": "128x128", "type": "image/png", "purpose": "any" },
-    { "src": "icon-144.png", "sizes": "144x144", "type": "image/png", "purpose": "any" },
-    { "src": "icon-152.png", "sizes": "152x152", "type": "image/png", "purpose": "any" },
-    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
-    { "src": "icon-384.png", "sizes": "384x384", "type": "image/png", "purpose": "any" },
-    {
-      "src": "icon-512.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "any maskable"
-    },
-    {
-      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%231a2a4a'/%3E%3Ctext x='50' y='67' font-size='50' text-anchor='middle' fill='%23f5e7c8' font-family='Arial'%3Eق%3C/text%3E%3C/svg%3E",
-      "sizes": "any",
-      "type": "image/svg+xml",
-      "purpose": "any maskable"
+// ============================================================
+//  Service Worker - أثير
+// ============================================================
+
+const CACHE_NAME = 'atheer-v1.2';
+const ASSETS_TO_CACHE = [
+    './',
+    './index.html',
+    './style.css',
+    './script.js',
+    './manifest.json',
+    './offline.html',
+    './quran-uthmani.json'
+];
+
+self.addEventListener('install', event => {
+    event.waitUntil(
+        caches.open(CACHE_NAME)
+            .then(cache => {
+                console.log('[SW] تم فتح الكاش');
+                return cache.addAll(ASSETS_TO_CACHE).catch(err => {
+                    console.warn('[SW] فشل تحميل بعض الملفات:', err);
+                });
+            })
+            .then(() => self.skipWaiting())
+    );
+});
+
+self.addEventListener('activate', event => {
+    event.waitUntil(
+        caches.keys().then(cacheNames => {
+            return Promise.all(
+                cacheNames.map(cache => {
+                    if (cache !== CACHE_NAME) {
+                        console.log('[SW] حذف الكاش القديم:', cache);
+                        return caches.delete(cache);
+                    }
+                })
+            );
+        }).then(() => self.clients.claim())
+    );
+});
+
+self.addEventListener('fetch', event => {
+    const requestUrl = new URL(event.request.url);
+    
+    if (requestUrl.pathname.endsWith('.mp3')) {
+        event.respondWith(fetch(event.request).catch(() => {
+            return new Response('', { status: 404 });
+        }));
+        return;
     }
-  ]
-}
+
+    if (requestUrl.hostname === 'cdnjs.cloudflare.com' || 
+        requestUrl.hostname === 'fonts.googleapis.com' ||
+        requestUrl.hostname === 'fonts.gstatic.com' ||
+        requestUrl.hostname === 'api.alquran.cloud') {
+        event.respondWith(fetch(event.request));
+        return;
+    }
+
+    event.respondWith(
+        caches.match(event.request)
+            .then(response => {
+                if (response) {
+                    return response;
+                }
+                return fetch(event.request)
+                    .then(response => {
+                        if (response && response.status === 200) {
+                            const responseClone = response.clone();
+                            caches.open(CACHE_NAME)
+                                .then(cache => {
+                                    cache.put(event.request, responseClone);
+                                });
+                        }
+                        return response;
+                    })
+                    .catch(() => {
+                        if (event.request.headers.get('accept')?.includes('text/html')) {
+                            return caches.match('./offline.html');
+                        }
+                        return new Response('', { status: 404 });
+                    });
+            })
+    );
+});
